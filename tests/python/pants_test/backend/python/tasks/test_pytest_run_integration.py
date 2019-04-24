@@ -129,3 +129,69 @@ class PytestRunIntegrationTest(PantsRunIntegrationTest):
     else:
       print('Could not find both python {} and python {} on system. Skipping.'.format(py27, py3))
       self.skipTest('Missing neccesary Python interpreters on system.')
+
+    def test_pants_test_can_resolve_all_test_dependencies(self):
+      """
+      This is for handling a scenario where a dependee binary has a platform specified as
+      Linux whereas we're currently running tests that depend on the same 3rdparty target
+      on a different platform.
+      """
+      build = os.path.join(project, 'BUILD')
+      test_project ='testprojects/tests/python/cache_fields'
+      test_build = os.path.join(test_project, 'BUILD')
+      test_lib = os.path.join(project, 'main.py')
+      test_src = os.path.join(test_project, 'test_main.py')
+
+
+      with self.caching_config() as config, self.mock_buildroot() as buildroot, buildroot.pushd():
+        buildroot.write_file(
+          test_build,
+          dedent("""
+          python_requirements_library(
+            name='cffi',
+            requirements=[
+              python_requirement('cffi==1.12.1')
+            ]
+          )
+
+          python_library(
+            name='main',
+            dependencies=[':cffi'],
+            sources=['main.py'],
+          )
+
+          python_tests(
+            name='test_main',
+            dependencies=[':main'],
+            sources=['test_main.py'],
+          )
+
+          python_binary(
+            name='main-bin',
+            source='main.py',
+            dependencies=[':main'],
+            platform=['linux-x86_64'],
+          )
+          """)
+        )
+        buildroot.write_file(test_lib, '')
+        buildroot.write_file(
+          test_src,
+          dedent("""
+          import cffi
+
+
+          def test_asert_cffi_loaded():
+              assert cffi.__version__ == '1.12.1'
+          """)
+        )
+
+
+      pants_run_3 = self.run_pants(
+            command=[
+              'test',
+              '{}:test_main'.format(test_project),
+            ],
+          )
+
+      self.assert_success(pants_run_3)
